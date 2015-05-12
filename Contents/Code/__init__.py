@@ -1,6 +1,6 @@
 ######################################################################################
 #
-#	G2G.fm (BY TEHCRUCIBLE) - v0.04
+#	G2G.fm (BY TEHCRUCIBLE) - v0.03
 #
 ######################################################################################
 
@@ -15,7 +15,7 @@ ICON_NEXT = "icon-next.png"
 ICON_MOVIES = "icon-movies.png"
 ICON_SERIES = "icon-series.png"
 ICON_QUEUE = "icon-queue.png"
-BASE_URL = "http://g2g.fm"
+BASE_URL = "http://4do.se"
 
 ######################################################################################
 # Set global variables
@@ -31,7 +31,7 @@ def Start():
 	
 	HTTP.CacheTime = CACHE_1HOUR
 	HTTP.Headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_8_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.63 Safari/537.36'
-	HTTP.Headers['Referer'] = 'http://g2g.fm/'
+	HTTP.Headers['Referer'] = 'http://4do.se/'
 	
 ######################################################################################
 # Menu hierarchy
@@ -44,6 +44,8 @@ def MainMenu():
 	oc.add(DirectoryObject(key = Callback(ShowCategory, title="TV Series", category = "/tvseries", page_count = 1), title = "TV Series", thumb = R(ICON_SERIES)))
 	oc.add(DirectoryObject(key = Callback(ShowCategory, title="Latest Episodes", category = "/episodes", page_count = 1), title = "Latest Episodes", thumb = R(ICON_SERIES)))
 	oc.add(DirectoryObject(key = Callback(GenreMenu, title="Genres"), title = "Genres", thumb = R(ICON_LIST)))
+	oc.add(DirectoryObject(key = Callback(Bookmarks, title="My Bookmarks"), title = "My Bookmarks", thumb = R(ICON_QUEUE)))
+	oc.add(InputDirectoryObject(key=Callback(Search), title = "Search", prompt = "Search for what?", thumb = R(ICON_SEARCH)))
 	
 	return oc
 
@@ -134,10 +136,7 @@ def EpisodeDetail(title, url):
 	thumb = page_data.xpath("//blockquote[@class='postcontent restore']//div/img/@src")[0]
 
 	#load recursive iframes to find google docs url
-	try:
-		first_frame_url = page_data.xpath("//blockquote/div/iframe/@src")[1]
-	except:
-		first_frame_url = page_data.xpath("//blockquote/div/iframe/@src")[0]
+	first_frame_url = page_data.xpath("//blockquote/div/iframe/@src")[0]
 	first_frame_data = HTML.ElementFromString(HTTP.Request(first_frame_url, headers={'referer':url}))
 	second_frame_url = first_frame_data.xpath("//iframe/@src")[0]
 	second_frame_data = HTML.ElementFromString(HTTP.Request(second_frame_url, headers={'referer':first_frame_url}))
@@ -184,10 +183,106 @@ def EpisodeDetail(title, url):
 			thumb = R(ICON_SERIES),
 			title = "Watch Trailer"
 			)
-		)	
+		)
+	
+	#provide a way to add to favourites list
+	oc.add(DirectoryObject(
+		key = Callback(AddBookmark, title = title, url = url),
+		title = "Bookmark Video",
+		thumb = R(ICON_QUEUE)
+		)
+	)	
 	
 	return oc
+	
+######################################################################################
+# Loads bookmarked shows from Dict.  Titles are used as keys to store the show urls.
 
+@route(PREFIX + "/bookmarks")	
+def Bookmarks(title):
+
+	oc = ObjectContainer(title1 = title)
+	
+	for each in Dict:
+		url = Dict[each]
+		page_data = HTML.ElementFromURL(url)
+		title = each
+		thumb = page_data.xpath("//blockquote[@class='postcontent restore']/div/img/@src")[0]
+		
+		oc.add(DirectoryObject(
+			key = Callback(EpisodeDetail, title = title, url = url),
+			title = title,
+			thumb = Resource.ContentsOfURLWithFallback(url = thumb, fallback='icon-cover.png')
+			)
+		)
+	
+	#add a way to clear bookmarks list
+	oc.add(DirectoryObject(
+		key = Callback(ClearBookmarks),
+		title = "Clear Bookmarks",
+		thumb = R(ICON_QUEUE),
+		summary = "CAUTION! This will clear your entire bookmark list!"
+		)
+	)
+	
+	return oc
+	
+######################################################################################
+# Adds a show to the bookmarks list using the title as a key for the url
+	
+@route(PREFIX + "/addbookmark")
+def AddBookmark(title, url):
+	
+	Dict[title] = url
+	Dict.Save()
+	return ObjectContainer(header=title, message='This show has been added to your bookmarks.')
+	
+######################################################################################
+# Clears the Dict that stores the bookmarks list
+	
+@route(PREFIX + "/clearbookmarks")
+def ClearBookmarks():
+
+	Dict.Reset()
+	return ObjectContainer(header="My Bookmarks", message='Your bookmark list will be cleared soon.')
+	
+######################################################################################
+# Searches both movies and tvseries for query and returns concatenated results
+
+@route(PREFIX + "/search")	
+def Search(query):
+		
+	oc = ObjectContainer(title1 = query)
+	
+	for each in HTML.ElementFromURL("http://4do.se/tvseries/search.php?q=" + query).xpath("//blockquote/ol/span/b/a"):
+		if len(each.xpath("./text()")[0].strip()) > 0:
+			title = each.xpath("./text()")[0]
+			url = BASE_URL + "/tvseries/" + each.xpath("./@href")[0]
+		
+			oc.add(DirectoryObject(
+				key = Callback(PageEpisodes, title = title, url = url),
+				title = title
+				)
+			)
+	
+	for each in HTML.ElementFromURL("http://4do.se.fm/movies/search.php?q=" + query).xpath("//blockquote/ol/span/b/a"):
+		if len(each.xpath("./text()")[0].strip()) > 0:
+			title = each.xpath("./text()")[0]
+			url = BASE_URL + "/movies/" + each.xpath("./@href")[0]
+		
+			oc.add(DirectoryObject(
+				key = Callback(EpisodeDetail, title = title, url = url),
+				title = title
+				)
+			)
+	
+	#check for zero results and display error
+	if len(oc) < 1:
+		Log ("No shows found! Check search query.")
+		return ObjectContainer(header="Error", message="Nothing found! Try something less specific.") 
+	
+	return oc
+	
 ######################################################################################
 # Displays movie genre categories
 	
@@ -195,7 +290,7 @@ def EpisodeDetail(title, url):
 def GenreMenu(title):
 
 	oc = ObjectContainer(title1 = title)
-	page_data = HTML.ElementFromURL("http://g2g.fm/movies/genre.php?showC=27")
+	page_data = HTML.ElementFromURL("http://4do.se/movies/genre.php?showC=27")
 
 	for each in page_data.xpath("//td[@class='topic_content']"):
 		url = BASE_URL + "/movies/" + "/" + each.xpath("./div/a/@href")[0]
